@@ -1,6 +1,6 @@
 import { stdin } from 'process';
 import { STANDARD_HOOK_RESPONSE } from './hook-response.js';
-import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
+import { ensureWorkerRunning, getWorkerBaseUrl, getWorkerHeaders } from '../shared/worker-utils.js';
 import { getProjectName } from '../utils/project-name.js';
 
 export interface UserPromptSubmitInput {
@@ -24,12 +24,13 @@ async function newHook(input?: UserPromptSubmitInput): Promise<void> {
   const { session_id, cwd, prompt } = input;
   const project = getProjectName(cwd);
 
-  const port = getWorkerPort();
+  const baseUrl = getWorkerBaseUrl();
+  const headers = getWorkerHeaders();
 
   // Initialize session via HTTP - handles DB operations and privacy checks
-  const initResponse = await fetch(`http://127.0.0.1:${port}/api/sessions/init`, {
+  const initResponse = await fetch(`${baseUrl}/api/sessions/init`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       claudeSessionId: session_id,
       project,
@@ -60,9 +61,9 @@ async function newHook(input?: UserPromptSubmitInput): Promise<void> {
   const cleanedPrompt = prompt.startsWith('/') ? prompt.substring(1) : prompt;
 
   // Initialize SDK agent session via HTTP (starts the agent!)
-  const response = await fetch(`http://127.0.0.1:${port}/sessions/${sessionDbId}/init`, {
+  const response = await fetch(`${baseUrl}/sessions/${sessionDbId}/init`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ userPrompt: cleanedPrompt, promptNumber }),
     signal: AbortSignal.timeout(5000)
   });

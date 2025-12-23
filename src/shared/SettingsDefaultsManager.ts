@@ -38,6 +38,14 @@ export interface SettingsDefaults {
   // Feature Toggles
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE: string;
+  // Remote Access Configuration
+  CLAUDE_MEM_INSTALL_MODE: string;           // 'server' | 'client' - installation mode
+  CLAUDE_MEM_REMOTE_ENABLED: string;         // 'true' | 'false' - is remote access enabled (server mode)
+  CLAUDE_MEM_REMOTE_URL: string;             // Remote server URL (client mode)
+  CLAUDE_MEM_AUTH_TOKEN: string;             // Auth token for remote connections
+  CLAUDE_MEM_TUNNEL_PROVIDER: string;        // 'cloudflare' | 'tailscale' | 'ngrok' | 'manual'
+  CLAUDE_MEM_TUNNEL_URL: string;             // The public tunnel URL (server mode)
+  CLAUDE_MEM_TUNNEL_AUTOSTART: string;       // 'true' | 'false' - auto-start tunnel with worker
 }
 
 export class SettingsDefaultsManager {
@@ -71,6 +79,14 @@ export class SettingsDefaultsManager {
     // Feature Toggles
     CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY: 'true',
     CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE: 'false',
+    // Remote Access Configuration
+    CLAUDE_MEM_INSTALL_MODE: 'server',        // Default to full server installation
+    CLAUDE_MEM_REMOTE_ENABLED: 'false',       // Remote access disabled by default
+    CLAUDE_MEM_REMOTE_URL: '',                // Empty = not a client
+    CLAUDE_MEM_AUTH_TOKEN: '',                // Empty = no auth required
+    CLAUDE_MEM_TUNNEL_PROVIDER: 'cloudflare', // Default tunnel provider
+    CLAUDE_MEM_TUNNEL_URL: '',                // Set when tunnel is configured
+    CLAUDE_MEM_TUNNEL_AUTOSTART: 'false',     // Don't auto-start tunnel by default
   };
 
   /**

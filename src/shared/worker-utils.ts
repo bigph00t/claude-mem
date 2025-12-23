@@ -16,6 +16,9 @@ const HEALTH_CHECK_TIMEOUT_MS = getTimeout(HOOK_TIMEOUTS.HEALTH_CHECK);
 // Cache to avoid repeated settings file reads
 let cachedPort: number | null = null;
 let cachedHost: string | null = null;
+let cachedInstallMode: string | null = null;
+let cachedRemoteUrl: string | null = null;
+let cachedAuthToken: string | null = null;
 
 /**
  * Get the worker port number from settings
@@ -56,6 +59,89 @@ export function getWorkerHost(): string {
 export function clearPortCache(): void {
   cachedPort = null;
   cachedHost = null;
+  cachedInstallMode = null;
+  cachedRemoteUrl = null;
+  cachedAuthToken = null;
+}
+
+/**
+ * Check if running in client mode (connecting to remote server)
+ */
+export function isClientMode(): boolean {
+  if (cachedInstallMode !== null) {
+    return cachedInstallMode === 'client';
+  }
+
+  const settingsPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'settings.json');
+  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  cachedInstallMode = settings.CLAUDE_MEM_INSTALL_MODE || 'server';
+  return cachedInstallMode === 'client';
+}
+
+/**
+ * Get the remote server URL (only valid in client mode)
+ */
+export function getRemoteUrl(): string | null {
+  if (cachedRemoteUrl !== null) {
+    return cachedRemoteUrl || null;
+  }
+
+  const settingsPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'settings.json');
+  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  cachedRemoteUrl = settings.CLAUDE_MEM_REMOTE_URL || '';
+  return cachedRemoteUrl || null;
+}
+
+/**
+ * Get the auth token for remote connections
+ */
+export function getAuthToken(): string | null {
+  if (cachedAuthToken !== null) {
+    return cachedAuthToken || null;
+  }
+
+  const settingsPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'settings.json');
+  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  cachedAuthToken = settings.CLAUDE_MEM_AUTH_TOKEN || '';
+  return cachedAuthToken || null;
+}
+
+/**
+ * Get the base URL for worker API requests
+ * In client mode, returns the remote URL
+ * In server mode, returns the local URL
+ */
+export function getWorkerBaseUrl(): string {
+  if (isClientMode()) {
+    const remoteUrl = getRemoteUrl();
+    if (!remoteUrl) {
+      throw new Error('Client mode enabled but CLAUDE_MEM_REMOTE_URL not configured. Please set the remote server URL in settings.');
+    }
+    // Remove trailing slash if present
+    return remoteUrl.replace(/\/$/, '');
+  }
+
+  const port = getWorkerPort();
+  return `http://127.0.0.1:${port}`;
+}
+
+/**
+ * Get headers for worker API requests
+ * Includes auth token when in client mode
+ */
+export function getWorkerHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+
+  if (isClientMode()) {
+    const token = getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+
+  return headers;
 }
 
 /**
@@ -159,12 +245,45 @@ async function startWorker(): Promise<boolean> {
 }
 
 /**
+ * Check if remote server is accessible (for client mode)
+ */
+async function isRemoteServerHealthy(): Promise<boolean> {
+  const baseUrl = getWorkerBaseUrl();
+  const headers = getWorkerHeaders();
+  const response = await fetch(`${baseUrl}/api/readiness`, {
+    headers,
+    signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS)
+  });
+  return response.ok;
+}
+
+/**
  * Ensure worker service is running
- * Checks health and auto-starts if not running
- * Also ensures worker version matches plugin version
+ * In server mode: Checks health and auto-starts if not running
+ * In client mode: Verifies remote server is accessible
+ * Also ensures worker version matches plugin version (server mode only)
  */
 export async function ensureWorkerRunning(): Promise<void> {
-  // Check if already healthy (will throw on fetch errors)
+  // Client mode: just verify remote server is accessible
+  if (isClientMode()) {
+    try {
+      const healthy = await isRemoteServerHealthy();
+      if (!healthy) {
+        const remoteUrl = getRemoteUrl();
+        throw new Error(`Remote server at ${remoteUrl} is not responding. Please check that the server is running and the URL is correct.`);
+      }
+      logger.debug('SYSTEM', 'Remote server is healthy', { url: getRemoteUrl() });
+      return;
+    } catch (error) {
+      const remoteUrl = getRemoteUrl();
+      if (error instanceof Error && error.message.includes('Remote server')) {
+        throw error;
+      }
+      throw new Error(`Cannot connect to remote server at ${remoteUrl}. Please check your network connection and that the server is running.`);
+    }
+  }
+
+  // Server mode: Check if already healthy (will throw on fetch errors)
   let healthy = false;
   try {
     healthy = await isWorkerHealthy();

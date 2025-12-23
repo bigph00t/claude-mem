@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Feed } from './components/Feed';
 import { ContextSettingsModal } from './components/ContextSettingsModal';
+import { RemoteAccessModal } from './components/RemoteAccessModal';
 import { useSSE } from './hooks/useSSE';
 import { useSettings } from './hooks/useSettings';
 import { useStats } from './hooks/useStats';
@@ -13,6 +14,7 @@ import { mergeAndDeduplicateByProject } from './utils/data';
 export function App() {
   const [currentFilter, setCurrentFilter] = useState('');
   const [contextPreviewOpen, setContextPreviewOpen] = useState(false);
+  const [remoteAccessOpen, setRemoteAccessOpen] = useState(false);
   const [paginatedObservations, setPaginatedObservations] = useState<Observation[]>([]);
   const [paginatedSummaries, setPaginatedSummaries] = useState<Summary[]>([]);
   const [paginatedPrompts, setPaginatedPrompts] = useState<UserPrompt[]>([]);
@@ -51,6 +53,11 @@ export function App() {
   // Toggle context preview modal
   const toggleContextPreview = useCallback(() => {
     setContextPreviewOpen(prev => !prev);
+  }, []);
+
+  // Toggle remote access modal
+  const toggleRemoteAccess = useCallback(() => {
+    setRemoteAccessOpen(prev => !prev);
   }, []);
 
   // Handle loading more data
@@ -97,6 +104,7 @@ export function App() {
         themePreference={preference}
         onThemeChange={setThemePreference}
         onContextPreviewToggle={toggleContextPreview}
+        onRemoteAccessToggle={toggleRemoteAccess}
       />
 
       <Feed
@@ -115,6 +123,13 @@ export function App() {
         onSave={saveSettings}
         isSaving={isSaving}
         saveStatus={saveStatus}
+      />
+
+      <RemoteAccessModal
+        isOpen={remoteAccessOpen}
+        onClose={toggleRemoteAccess}
+        settings={settings}
+        onSave={saveSettings}
       />
     </>
   );

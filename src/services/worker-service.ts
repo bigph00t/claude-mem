@@ -32,12 +32,14 @@ import { TimelineService } from './worker/TimelineService.js';
 import { SessionEventBroadcaster } from './worker/events/SessionEventBroadcaster.js';
 
 // Import HTTP layer
-import { createMiddleware, summarizeRequestBody as summarizeBody, requireLocalhost } from './worker/http/middleware.js';
+import { createMiddleware, createAuthMiddleware, summarizeRequestBody as summarizeBody, requireLocalhost } from './worker/http/middleware.js';
 import { ViewerRoutes } from './worker/http/routes/ViewerRoutes.js';
 import { SessionRoutes } from './worker/http/routes/SessionRoutes.js';
 import { DataRoutes } from './worker/http/routes/DataRoutes.js';
 import { SearchRoutes } from './worker/http/routes/SearchRoutes.js';
 import { SettingsRoutes } from './worker/http/routes/SettingsRoutes.js';
+import { RemoteAccessRoutes } from './worker/http/routes/RemoteAccessRoutes.js';
+import { getTunnelManager } from './worker/TunnelManager.js';
 
 export class WorkerService {
   private app: express.Application;
@@ -64,6 +66,7 @@ export class WorkerService {
   private dataRoutes: DataRoutes;
   private searchRoutes: SearchRoutes | null;
   private settingsRoutes: SettingsRoutes;
+  private remoteAccessRoutes: RemoteAccessRoutes;
 
   // Initialization tracking
   private initializationComplete: Promise<void>;
@@ -104,6 +107,7 @@ export class WorkerService {
     // SearchRoutes needs SearchManager which requires initialized DB - will be created in initializeBackground()
     this.searchRoutes = null;
     this.settingsRoutes = new SettingsRoutes(this.settingsManager);
+    this.remoteAccessRoutes = new RemoteAccessRoutes();
 
     this.setupMiddleware();
     this.setupRoutes();
@@ -115,6 +119,10 @@ export class WorkerService {
   private setupMiddleware(): void {
     const middlewares = createMiddleware(this.summarizeRequestBody.bind(this));
     middlewares.forEach(mw => this.app.use(mw));
+
+    // Add auth middleware for remote access
+    // This checks auth token for non-localhost requests when remote access is enabled
+    this.app.use(createAuthMiddleware());
   }
 
   /**
@@ -254,6 +262,7 @@ export class WorkerService {
     this.dataRoutes.setupRoutes(this.app);
     // searchRoutes is set up after database initialization in initializeBackground()
     this.settingsRoutes.setupRoutes(this.app);
+    this.remoteAccessRoutes.setupRoutes(this.app);
 
     // Register early handler for /api/context/inject to avoid 404 during startup
     // This handler waits for initialization to complete before delegating to SearchRoutes
@@ -464,10 +473,53 @@ export class WorkerService {
       this.initializationCompleteFlag = true;
       this.resolveInitialization();
       logger.info('SYSTEM', 'Background initialization complete');
+
+      // Auto-start tunnel if configured
+      await this.autoStartTunnel();
     } catch (error) {
       logger.error('SYSTEM', 'Background initialization failed', {}, error as Error);
       // Don't resolve - let the promise remain pending so readiness check continues to fail
       throw error;
+    }
+  }
+
+  /**
+   * Auto-start tunnel if configured in settings
+   */
+  private async autoStartTunnel(): Promise<void> {
+    try {
+      const { SettingsDefaultsManager } = await import('../shared/SettingsDefaultsManager.js');
+      const { USER_SETTINGS_PATH } = await import('../shared/paths.js');
+
+      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+
+      if (settings.CLAUDE_MEM_TUNNEL_AUTOSTART !== 'true') {
+        return;
+      }
+
+      if (settings.CLAUDE_MEM_INSTALL_MODE === 'client') {
+        logger.debug('TUNNEL', 'Skipping tunnel autostart in client mode');
+        return;
+      }
+
+      const tunnelManager = getTunnelManager();
+
+      // Check if cloudflared is available
+      const cloudflaredInfo = await tunnelManager.checkCloudflared();
+      if (!cloudflaredInfo.installed) {
+        logger.warn('TUNNEL', 'Tunnel autostart configured but cloudflared not installed');
+        return;
+      }
+
+      // Start the tunnel
+      const provider = (settings.CLAUDE_MEM_TUNNEL_PROVIDER || 'cloudflare') as 'cloudflare';
+      logger.info('TUNNEL', 'Auto-starting tunnel', { provider });
+
+      const url = await tunnelManager.startTunnel(provider);
+      logger.success('TUNNEL', 'Tunnel auto-started', { url });
+    } catch (error) {
+      logger.error('TUNNEL', 'Failed to auto-start tunnel', {}, error as Error);
+      // Don't fail startup - tunnel is optional
     }
   }
 
@@ -509,6 +561,13 @@ export class WorkerService {
    */
   async shutdown(): Promise<void> {
     logger.info('SYSTEM', 'Shutdown initiated');
+
+    // STEP 0: Stop tunnel if running
+    const tunnelManager = getTunnelManager();
+    if (tunnelManager.isRunning()) {
+      logger.info('SYSTEM', 'Stopping tunnel');
+      tunnelManager.stopTunnel();
+    }
 
     // STEP 1: Enumerate all child processes BEFORE we start closing things
     const childPids = await this.getChildProcesses(process.pid);

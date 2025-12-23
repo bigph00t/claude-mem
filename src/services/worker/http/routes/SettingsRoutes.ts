@@ -100,6 +100,14 @@ export class SettingsRoutes extends BaseRouteHandler {
       // Feature Toggles
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY',
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE',
+      // Remote Access Configuration
+      'CLAUDE_MEM_INSTALL_MODE',
+      'CLAUDE_MEM_REMOTE_ENABLED',
+      'CLAUDE_MEM_REMOTE_URL',
+      'CLAUDE_MEM_AUTH_TOKEN',
+      'CLAUDE_MEM_TUNNEL_PROVIDER',
+      'CLAUDE_MEM_TUNNEL_URL',
+      'CLAUDE_MEM_TUNNEL_AUTOSTART',
     ];
 
     for (const key of settingKeys) {
@@ -296,6 +304,41 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     // Skip observation concepts validation - any concept string is valid since modes define their own concepts
     // The database accepts any TEXT value, and mode-specific validation happens at parse time
+
+    // Validate CLAUDE_MEM_INSTALL_MODE
+    if (settings.CLAUDE_MEM_INSTALL_MODE) {
+      if (!['server', 'client'].includes(settings.CLAUDE_MEM_INSTALL_MODE)) {
+        return { valid: false, error: 'CLAUDE_MEM_INSTALL_MODE must be "server" or "client"' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_TUNNEL_PROVIDER
+    if (settings.CLAUDE_MEM_TUNNEL_PROVIDER) {
+      if (!['cloudflare', 'tailscale', 'ngrok', 'manual'].includes(settings.CLAUDE_MEM_TUNNEL_PROVIDER)) {
+        return { valid: false, error: 'CLAUDE_MEM_TUNNEL_PROVIDER must be one of: cloudflare, tailscale, ngrok, manual' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_REMOTE_URL (must be valid URL if provided)
+    if (settings.CLAUDE_MEM_REMOTE_URL && settings.CLAUDE_MEM_REMOTE_URL.trim()) {
+      try {
+        new URL(settings.CLAUDE_MEM_REMOTE_URL);
+      } catch {
+        return { valid: false, error: 'CLAUDE_MEM_REMOTE_URL must be a valid URL' };
+      }
+    }
+
+    // Validate remote access boolean settings
+    const remoteAccessBooleanSettings = [
+      'CLAUDE_MEM_REMOTE_ENABLED',
+      'CLAUDE_MEM_TUNNEL_AUTOSTART',
+    ];
+
+    for (const key of remoteAccessBooleanSettings) {
+      if (settings[key] && !['true', 'false'].includes(settings[key])) {
+        return { valid: false, error: `${key} must be "true" or "false"` };
+      }
+    }
 
     return { valid: true };
   }

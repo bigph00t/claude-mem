@@ -7,7 +7,7 @@
  */
 
 import { stdin } from 'process';
-import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
+import { ensureWorkerRunning, getWorkerBaseUrl, getWorkerHeaders } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 
 export interface SessionEndInput {
@@ -28,12 +28,13 @@ async function cleanupHook(input?: SessionEndInput): Promise<void> {
 
   const { session_id, reason } = input;
 
-  const port = getWorkerPort();
+  const baseUrl = getWorkerBaseUrl();
+  const headers = getWorkerHeaders();
 
   // Send to worker - worker handles finding session, marking complete, and stopping spinner
-  const response = await fetch(`http://127.0.0.1:${port}/api/sessions/complete`, {
+  const response = await fetch(`${baseUrl}/api/sessions/complete`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       claudeSessionId: session_id,
       reason

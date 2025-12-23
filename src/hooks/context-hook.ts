@@ -7,7 +7,7 @@
  */
 
 import { stdin } from "process";
-import { ensureWorkerRunning, getWorkerPort } from "../shared/worker-utils.js";
+import { ensureWorkerRunning, getWorkerBaseUrl, getWorkerHeaders } from "../shared/worker-utils.js";
 import { HOOK_TIMEOUTS } from "../shared/hook-constants.js";
 import { getProjectName } from "../utils/project-name.js";
 
@@ -24,11 +24,12 @@ async function contextHook(input?: SessionStartInput): Promise<string> {
 
   const cwd = input?.cwd ?? process.cwd();
   const project = getProjectName(cwd);
-  const port = getWorkerPort();
+  const baseUrl = getWorkerBaseUrl();
+  const headers = getWorkerHeaders();
 
-  const url = `http://127.0.0.1:${port}/api/context/inject?project=${encodeURIComponent(project)}`;
+  const url = `${baseUrl}/api/context/inject?project=${encodeURIComponent(project)}`;
 
-  const response = await fetch(url, { signal: AbortSignal.timeout(HOOK_TIMEOUTS.DEFAULT) });
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(HOOK_TIMEOUTS.DEFAULT) });
 
   if (!response.ok) {
     throw new Error(`Context generation failed: ${response.status}`);

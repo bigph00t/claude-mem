@@ -12,7 +12,7 @@
 import { stdin } from 'process';
 import { STANDARD_HOOK_RESPONSE } from './hook-response.js';
 import { logger } from '../utils/logger.js';
-import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
+import { ensureWorkerRunning, getWorkerBaseUrl, getWorkerHeaders } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { extractLastMessage } from '../shared/transcript-parser.js';
 
@@ -35,7 +35,8 @@ async function summaryHook(input?: StopInput): Promise<void> {
 
   const { session_id } = input;
 
-  const port = getWorkerPort();
+  const baseUrl = getWorkerBaseUrl();
+  const headers = getWorkerHeaders();
 
   // Validate required fields before processing
   if (!input.transcript_path) {
@@ -47,15 +48,15 @@ async function summaryHook(input?: StopInput): Promise<void> {
   const lastAssistantMessage = extractLastMessage(input.transcript_path, 'assistant', true);
 
   logger.dataIn('HOOK', 'Stop: Requesting summary', {
-    workerPort: port,
+    workerUrl: baseUrl,
     hasLastUserMessage: !!lastUserMessage,
     hasLastAssistantMessage: !!lastAssistantMessage
   });
 
   // Send to worker - worker handles privacy check and database operations
-  const response = await fetch(`http://127.0.0.1:${port}/api/sessions/summarize`, {
+  const response = await fetch(`${baseUrl}/api/sessions/summarize`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       claudeSessionId: session_id,
       last_user_message: lastUserMessage,

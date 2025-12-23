@@ -19,14 +19,23 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../utils/logger.js';
-import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
+import { getWorkerBaseUrl, getWorkerHeaders, isClientMode } from '../shared/worker-utils.js';
 
 /**
- * Worker HTTP API configuration
+ * Get Worker base URL - supports both local and remote modes
+ * In client mode, connects to remote server via tunnel
  */
-const WORKER_PORT = getWorkerPort();
-const WORKER_HOST = getWorkerHost();
-const WORKER_BASE_URL = `http://${WORKER_HOST}:${WORKER_PORT}`;
+function getBaseUrl(): string {
+  return getWorkerBaseUrl();
+}
+
+/**
+ * Get headers for Worker API requests
+ * Includes auth token when in client mode
+ */
+function getHeaders(): Record<string, string> {
+  return getWorkerHeaders();
+}
 
 /**
  * Map tool names to Worker HTTP endpoints
@@ -112,7 +121,9 @@ async function callWorkerAPI(
   endpoint: string,
   params: Record<string, any>
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  logger.debug('SYSTEM', '→ Worker API', undefined, { endpoint, params });
+  const baseUrl = getBaseUrl();
+  const headers = getHeaders();
+  logger.debug('SYSTEM', '→ Worker API', undefined, { endpoint, params, clientMode: isClientMode() });
 
   try {
     const searchParams = new URLSearchParams();
@@ -124,8 +135,8 @@ async function callWorkerAPI(
       }
     }
 
-    const url = `${WORKER_BASE_URL}${endpoint}?${searchParams}`;
-    const response = await fetch(url);
+    const url = `${baseUrl}${endpoint}?${searchParams}`;
+    const response = await fetch(url, { headers });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -157,11 +168,13 @@ async function callWorkerAPIWithPath(
   endpoint: string,
   id: number
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+  const baseUrl = getBaseUrl();
+  const headers = getHeaders();
   logger.debug('HTTP', 'Worker API request (path)', undefined, { endpoint, id });
 
   try {
-    const url = `${WORKER_BASE_URL}${endpoint}/${id}`;
-    const response = await fetch(url);
+    const url = `${baseUrl}${endpoint}/${id}`;
+    const response = await fetch(url, { headers });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -198,15 +211,15 @@ async function callWorkerAPIPost(
   endpoint: string,
   body: Record<string, any>
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+  const baseUrl = getBaseUrl();
+  const headers = getHeaders();
   logger.debug('HTTP', 'Worker API request (POST)', undefined, { endpoint });
 
   try {
-    const url = `${WORKER_BASE_URL}${endpoint}`;
+    const url = `${baseUrl}${endpoint}`;
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify(body)
     });
 
@@ -242,8 +255,10 @@ async function callWorkerAPIPost(
  * Verify Worker is accessible
  */
 async function verifyWorkerConnection(): Promise<boolean> {
+  const baseUrl = getBaseUrl();
+  const headers = getHeaders();
   try {
-    const response = await fetch(`${WORKER_BASE_URL}/api/health`);
+    const response = await fetch(`${baseUrl}/api/health`, { headers });
     return response.ok;
   } catch (error) {
     return false;
@@ -492,13 +507,19 @@ async function main() {
 
   // Check Worker availability in background
   setTimeout(async () => {
+    const workerUrl = getBaseUrl();
+    const clientMode = isClientMode();
     const workerAvailable = await verifyWorkerConnection();
     if (!workerAvailable) {
-      logger.warn('SYSTEM', 'Worker not available', undefined, { workerUrl: WORKER_BASE_URL });
-      logger.warn('SYSTEM', 'Tools will fail until Worker is started');
-      logger.warn('SYSTEM', 'Start Worker with: claude-mem restart');
+      logger.warn('SYSTEM', 'Worker not available', undefined, { workerUrl, clientMode });
+      if (clientMode) {
+        logger.warn('SYSTEM', 'Cannot connect to remote server. Check your network and tunnel configuration.');
+      } else {
+        logger.warn('SYSTEM', 'Tools will fail until Worker is started');
+        logger.warn('SYSTEM', 'Start Worker with: claude-mem restart');
+      }
     } else {
-      logger.info('SYSTEM', 'Worker available', undefined, { workerUrl: WORKER_BASE_URL });
+      logger.info('SYSTEM', 'Worker available', undefined, { workerUrl, clientMode });
     }
   }, 0);
 }

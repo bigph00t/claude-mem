@@ -91,6 +91,92 @@ export function requireLocalhost(req: Request, res: Response, next: NextFunction
 }
 
 /**
+ * Middleware to require auth token for remote connections
+ * If AUTH_TOKEN is configured and request is not from localhost, requires Bearer token
+ * Localhost requests bypass auth for local development convenience
+ */
+export function requireAuthToken(req: Request, res: Response, next: NextFunction): void {
+  const clientIp = req.ip || req.connection.remoteAddress || '';
+  const isLocalhost =
+    clientIp === '127.0.0.1' ||
+    clientIp === '::1' ||
+    clientIp === '::ffff:127.0.0.1' ||
+    clientIp === 'localhost';
+
+  // Localhost always bypasses auth
+  if (isLocalhost) {
+    return next();
+  }
+
+  // Load auth token from settings
+  const { SettingsDefaultsManager } = require('../../../shared/SettingsDefaultsManager.js');
+  const { USER_SETTINGS_PATH } = require('../../../shared/paths.js');
+  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+  const authToken = settings.CLAUDE_MEM_AUTH_TOKEN;
+
+  // If no auth token configured, allow all (warning: insecure for remote access)
+  if (!authToken) {
+    logger.debug('SECURITY', 'No auth token configured, allowing remote request');
+    return next();
+  }
+
+  // Check Authorization header
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) {
+    logger.warn('SECURITY', 'Remote request missing authorization header', {
+      endpoint: req.path,
+      clientIp
+    });
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Authorization header required for remote access'
+    });
+    return;
+  }
+
+  // Validate Bearer token
+  const [scheme, token] = authHeader.split(' ');
+  if (scheme?.toLowerCase() !== 'bearer' || token !== authToken) {
+    logger.warn('SECURITY', 'Invalid auth token', {
+      endpoint: req.path,
+      clientIp,
+      scheme
+    });
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Invalid or missing auth token'
+    });
+    return;
+  }
+
+  logger.debug('SECURITY', 'Remote request authenticated', { clientIp, endpoint: req.path });
+  next();
+}
+
+/**
+ * Create auth middleware factory that can be conditionally applied
+ * Returns middleware based on whether remote access is enabled
+ */
+export function createAuthMiddleware(): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    // Skip auth for health and readiness endpoints
+    if (req.path === '/api/health' || req.path === '/api/readiness') {
+      return next();
+    }
+
+    // Skip auth for static assets
+    const staticExtensions = ['.html', '.js', '.css', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff', '.woff2', '.ttf', '.eot'];
+    const isStaticAsset = staticExtensions.some(ext => req.path.endsWith(ext));
+    if (isStaticAsset || req.path === '/') {
+      return next();
+    }
+
+    // Apply auth check
+    requireAuthToken(req, res, next);
+  };
+}
+
+/**
  * Summarize request body for logging
  * Used to avoid logging sensitive data or large payloads
  */

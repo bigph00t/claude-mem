@@ -78,6 +78,39 @@ export interface Settings {
   // Feature Toggles
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY?: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
+
+  // Remote Access Configuration
+  CLAUDE_MEM_INSTALL_MODE?: string;
+  CLAUDE_MEM_REMOTE_ENABLED?: string;
+  CLAUDE_MEM_REMOTE_URL?: string;
+  CLAUDE_MEM_AUTH_TOKEN?: string;
+  CLAUDE_MEM_TUNNEL_PROVIDER?: string;
+  CLAUDE_MEM_TUNNEL_URL?: string;
+  CLAUDE_MEM_TUNNEL_AUTOSTART?: string;
+}
+
+export interface TunnelStatus {
+  active: boolean;
+  url: string | null;
+  pid: number | null;
+  provider: string;
+  error: string | null;
+}
+
+export interface RemoteStatus {
+  tunnel: TunnelStatus;
+  remoteEnabled: boolean;
+  installMode: string;
+  hasAuthToken: boolean;
+  tunnelProvider: string;
+  tunnelUrl: string | null;
+  tunnelAutostart: boolean;
+}
+
+export interface CloudflaredInfo {
+  installed: boolean;
+  version: string | null;
+  path: string | null;
 }
 
 export interface WorkerStats {

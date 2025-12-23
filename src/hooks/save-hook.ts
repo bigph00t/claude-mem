@@ -9,7 +9,7 @@
 import { stdin } from 'process';
 import { STANDARD_HOOK_RESPONSE } from './hook-response.js';
 import { logger } from '../utils/logger.js';
-import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
+import { ensureWorkerRunning, getWorkerBaseUrl, getWorkerHeaders } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 
 export interface PostToolUseInput {
@@ -33,12 +33,13 @@ async function saveHook(input?: PostToolUseInput): Promise<void> {
 
   const { session_id, cwd, tool_name, tool_input, tool_response } = input;
 
-  const port = getWorkerPort();
+  const baseUrl = getWorkerBaseUrl();
+  const headers = getWorkerHeaders();
 
   const toolStr = logger.formatTool(tool_name, tool_input);
 
   logger.dataIn('HOOK', `PostToolUse: ${toolStr}`, {
-    workerPort: port
+    workerUrl: baseUrl
   });
 
   // Validate required fields before sending to worker
@@ -47,9 +48,9 @@ async function saveHook(input?: PostToolUseInput): Promise<void> {
   }
 
   // Send to worker - worker handles privacy check and database operations
-  const response = await fetch(`http://127.0.0.1:${port}/api/sessions/observations`, {
+  const response = await fetch(`${baseUrl}/api/sessions/observations`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       claudeSessionId: session_id,
       tool_name,
