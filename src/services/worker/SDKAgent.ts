@@ -97,126 +97,143 @@ export class SDKAgent {
       }
     }
 
-    // Run Agent SDK query loop
-    // Only resume if we have a captured memory session ID
-    const queryResult = query({
-      prompt: messageGenerator,
-      options: {
-        model: modelId,
-        // Only resume if BOTH: (1) we have a memorySessionId AND (2) this isn't the first prompt
-        // On worker restart, memorySessionId may exist from a previous SDK session but we
-        // need to start fresh since the SDK context was lost
-        ...(hasRealMemorySessionId && session.lastPromptNumber > 1 && { resume: session.memorySessionId }),
-        disallowedTools,
-        abortController: session.abortController,
-        pathToClaudeCodeExecutable: claudePath
-      }
-    });
-
-    // Process SDK messages
-    for await (const message of queryResult) {
-      // Capture memory session ID from first SDK message (any type has session_id)
-      // This enables resume for subsequent generator starts within the same user session
-      if (!session.memorySessionId && message.session_id) {
-        session.memorySessionId = message.session_id;
-        // Persist to database for cross-restart recovery
-        this.dbManager.getSessionStore().updateMemorySessionId(
-          session.sessionDbId,
-          message.session_id
-        );
-        // Verify the update by reading back from DB
-        const verification = this.dbManager.getSessionStore().getSessionById(session.sessionDbId);
-        const dbVerified = verification?.memory_session_id === message.session_id;
-        logger.info('SESSION', `MEMORY_ID_CAPTURED | sessionDbId=${session.sessionDbId} | memorySessionId=${message.session_id} | dbVerified=${dbVerified}`, {
-          sessionId: session.sessionDbId,
-          memorySessionId: message.session_id
-        });
-        if (!dbVerified) {
-          logger.error('SESSION', `MEMORY_ID_MISMATCH | sessionDbId=${session.sessionDbId} | expected=${message.session_id} | got=${verification?.memory_session_id}`, {
-            sessionId: session.sessionDbId
-          });
-        }
-        // Debug-level alignment log for detailed tracing
-        logger.debug('SDK', `[ALIGNMENT] Captured | contentSessionId=${session.contentSessionId} → memorySessionId=${message.session_id} | Future prompts will resume with this ID`);
-      }
-
-      // Handle assistant messages
-      if (message.type === 'assistant') {
-        const content = message.message.content;
-        const textContent = Array.isArray(content)
-          ? content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n')
-          : typeof content === 'string' ? content : '';
-
-        const responseSize = textContent.length;
-
-        // Capture token state BEFORE updating (for delta calculation)
-        const tokensBeforeResponse = session.cumulativeInputTokens + session.cumulativeOutputTokens;
-
-        // Extract and track token usage
-        const usage = message.message.usage;
-        if (usage) {
-          session.cumulativeInputTokens += usage.input_tokens || 0;
-          session.cumulativeOutputTokens += usage.output_tokens || 0;
-
-          // Cache creation counts as discovery, cache read doesn't
-          if (usage.cache_creation_input_tokens) {
-            session.cumulativeInputTokens += usage.cache_creation_input_tokens;
-          }
-
-          logger.debug('SDK', 'Token usage captured', {
-            sessionId: session.sessionDbId,
-            inputTokens: usage.input_tokens,
-            outputTokens: usage.output_tokens,
-            cacheCreation: usage.cache_creation_input_tokens || 0,
-            cacheRead: usage.cache_read_input_tokens || 0,
-            cumulativeInput: session.cumulativeInputTokens,
-            cumulativeOutput: session.cumulativeOutputTokens
-          });
-        }
-
-        // Calculate discovery tokens (delta for this response only)
-        const discoveryTokens = (session.cumulativeInputTokens + session.cumulativeOutputTokens) - tokensBeforeResponse;
-
-        // Process response (empty or not) and mark messages as processed
-        // Capture earliest timestamp BEFORE processing (will be cleared after)
-        const originalTimestamp = session.earliestPendingTimestamp;
-
-        if (responseSize > 0) {
-          const truncatedResponse = responseSize > 100
-            ? textContent.substring(0, 100) + '...'
-            : textContent;
-          logger.dataOut('SDK', `Response received (${responseSize} chars)`, {
-            sessionId: session.sessionDbId,
-            promptNumber: session.lastPromptNumber
-          }, truncatedResponse);
-        }
-
-        // Parse and process response using shared ResponseProcessor
-        await processAgentResponse(
-          textContent,
-          session,
-          this.dbManager,
-          this.sessionManager,
-          worker,
-          discoveryTokens,
-          originalTimestamp,
-          'SDK',
-          cwdTracker.lastCwd
-        );
-      }
-
-      // Log result messages
-      if (message.type === 'result' && message.subtype === 'success') {
-        // Usage telemetry is captured at SDK level
-      }
+    // CRITICAL: Temporarily unset ANTHROPIC_API_KEY to force SDK to use Claude Code CLI
+    // Issue #733: SDK auto-discovers ANTHROPIC_API_KEY from .env files and bypasses CLI billing
+    // This ensures memory agent uses Claude Code's subscription billing, not user's personal API credits
+    const savedApiKey = process.env.ANTHROPIC_API_KEY;
+    if (savedApiKey) {
+      delete process.env.ANTHROPIC_API_KEY;
+      logger.debug('SDK', 'Temporarily unset ANTHROPIC_API_KEY to force Claude Code CLI billing');
     }
 
-    // Mark session complete
-    const sessionDuration = Date.now() - session.startTime;
-    logger.success('SDK', 'Agent completed', {
-      sessionId: session.sessionDbId,
-      duration: `${(sessionDuration / 1000).toFixed(1)}s`
-    });
+    try {
+      // Run Agent SDK query loop
+      // Only resume if we have a captured memory session ID
+      const queryResult = query({
+        prompt: messageGenerator,
+        options: {
+          model: modelId,
+          // Only resume if BOTH: (1) we have a memorySessionId AND (2) this isn't the first prompt
+          // On worker restart, memorySessionId may exist from a previous SDK session but we
+          // need to start fresh since the SDK context was lost
+          ...(hasRealMemorySessionId && session.lastPromptNumber > 1 && { resume: session.memorySessionId }),
+          disallowedTools,
+          abortController: session.abortController,
+          pathToClaudeCodeExecutable: claudePath
+        }
+      });
+
+      // Process SDK messages
+      for await (const message of queryResult) {
+        // Capture memory session ID from first SDK message (any type has session_id)
+        // This enables resume for subsequent generator starts within the same user session
+        if (!session.memorySessionId && message.session_id) {
+          session.memorySessionId = message.session_id;
+          // Persist to database for cross-restart recovery
+          this.dbManager.getSessionStore().updateMemorySessionId(
+            session.sessionDbId,
+            message.session_id
+          );
+          // Verify the update by reading back from DB
+          const verification = this.dbManager.getSessionStore().getSessionById(session.sessionDbId);
+          const dbVerified = verification?.memory_session_id === message.session_id;
+          logger.info('SESSION', `MEMORY_ID_CAPTURED | sessionDbId=${session.sessionDbId} | memorySessionId=${message.session_id} | dbVerified=${dbVerified}`, {
+            sessionId: session.sessionDbId,
+            memorySessionId: message.session_id
+          });
+          if (!dbVerified) {
+            logger.error('SESSION', `MEMORY_ID_MISMATCH | sessionDbId=${session.sessionDbId} | expected=${message.session_id} | got=${verification?.memory_session_id}`, {
+              sessionId: session.sessionDbId
+            });
+          }
+          // Debug-level alignment log for detailed tracing
+          logger.debug('SDK', `[ALIGNMENT] Captured | contentSessionId=${session.contentSessionId} → memorySessionId=${message.session_id} | Future prompts will resume with this ID`);
+        }
+
+        // Handle assistant messages
+        if (message.type === 'assistant') {
+          const content = message.message.content;
+          const textContent = Array.isArray(content)
+            ? content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n')
+            : typeof content === 'string' ? content : '';
+
+          const responseSize = textContent.length;
+
+          // Capture token state BEFORE updating (for delta calculation)
+          const tokensBeforeResponse = session.cumulativeInputTokens + session.cumulativeOutputTokens;
+
+          // Extract and track token usage
+          const usage = message.message.usage;
+          if (usage) {
+            session.cumulativeInputTokens += usage.input_tokens || 0;
+            session.cumulativeOutputTokens += usage.output_tokens || 0;
+
+            // Cache creation counts as discovery, cache read doesn't
+            if (usage.cache_creation_input_tokens) {
+              session.cumulativeInputTokens += usage.cache_creation_input_tokens;
+            }
+
+            logger.debug('SDK', 'Token usage captured', {
+              sessionId: session.sessionDbId,
+              inputTokens: usage.input_tokens,
+              outputTokens: usage.output_tokens,
+              cacheCreation: usage.cache_creation_input_tokens || 0,
+              cacheRead: usage.cache_read_input_tokens || 0,
+              cumulativeInput: session.cumulativeInputTokens,
+              cumulativeOutput: session.cumulativeOutputTokens
+            });
+          }
+
+          // Calculate discovery tokens (delta for this response only)
+          const discoveryTokens = (session.cumulativeInputTokens + session.cumulativeOutputTokens) - tokensBeforeResponse;
+
+          // Process response (empty or not) and mark messages as processed
+          // Capture earliest timestamp BEFORE processing (will be cleared after)
+          const originalTimestamp = session.earliestPendingTimestamp;
+
+          if (responseSize > 0) {
+            const truncatedResponse = responseSize > 100
+              ? textContent.substring(0, 100) + '...'
+              : textContent;
+            logger.dataOut('SDK', `Response received (${responseSize} chars)`, {
+              sessionId: session.sessionDbId,
+              promptNumber: session.lastPromptNumber
+            }, truncatedResponse);
+          }
+
+          // Parse and process response using shared ResponseProcessor
+          await processAgentResponse(
+            textContent,
+            session,
+            this.dbManager,
+            this.sessionManager,
+            worker,
+            discoveryTokens,
+            originalTimestamp,
+            'SDK',
+            cwdTracker.lastCwd
+          );
+        }
+
+        // Log result messages
+        if (message.type === 'result' && message.subtype === 'success') {
+          // Usage telemetry is captured at SDK level
+        }
+      }
+
+      // Mark session complete
+      const sessionDuration = Date.now() - session.startTime;
+      logger.success('SDK', 'Agent completed', {
+        sessionId: session.sessionDbId,
+        duration: `${(sessionDuration / 1000).toFixed(1)}s`
+      });
+    } finally {
+      // Always restore ANTHROPIC_API_KEY if it was set before
+      if (savedApiKey !== undefined) {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+        logger.debug('SDK', 'Restored ANTHROPIC_API_KEY after SDK query');
+      }
+    }
   }
 
   /**
