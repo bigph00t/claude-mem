@@ -20,9 +20,11 @@ export const summarizeHandler: EventHandler = {
 
     const port = getWorkerPort();
 
-    // Validate required fields before processing
+    // If no transcript path, there's nothing to summarize (e.g., Ctrl+C with no active session)
+    // Return success silently instead of throwing an error
     if (!transcriptPath) {
-      throw new Error(`Missing transcriptPath in Stop hook input for session ${sessionId}`);
+      logger.debug('HOOK', 'Stop: No transcript path provided, nothing to summarize');
+      return { continue: true, suppressOutput: true };
     }
 
     // Extract last assistant message from transcript (the work Claude did)
