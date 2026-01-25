@@ -121,6 +121,7 @@ Restart Claude Code. Context from previous sessions will automatically appear in
 - 🧠 **Persistent Memory** - Context survives across sessions
 - 📊 **Progressive Disclosure** - Layered memory retrieval with token cost visibility
 - 🔍 **Skill-Based Search** - Query your project history with mem-search skill
+- 🔄 **`/recall` Skill** - Token-efficient memory retrieval with prompted 2-step workflow
 - 🖥️ **Web Viewer UI** - Real-time memory stream at http://localhost:37777
 - 💻 **Claude Desktop Skill** - Search memory from Claude Desktop conversations
 - 🔒 **Privacy Control** - Use `<private>` tags to exclude sensitive content from storage
@@ -217,6 +218,47 @@ get_observations(ids=[123, 456])
 ```
 
 See [Search Tools Guide](https://docs.claude-mem.ai/usage/search-tools) for detailed examples.
+
+---
+
+## `/recall` Skill
+
+The `/recall` skill bundles the MCP search workflow into a **prompted 2-step process** that teaches Claude when and how to retrieve memory efficiently.
+
+**What It Does:**
+
+Instead of Claude needing to know about MCP tools and the 3-layer workflow, the `/recall` skill provides clear instructions that Claude follows automatically when users ask about past work.
+
+**The 2-Step Workflow:**
+
+1. **Search** - Claude queries the memory index to find relevant observations
+   ```bash
+   curl -s "http://127.0.0.1:37777/api/search?query=rate+limiting&limit=15"
+   ```
+   Returns compact index (~100 tokens/result) with IDs, titles, types, and dates.
+
+2. **Fetch** - Claude reviews the index, decides which observations are relevant, then fetches full details
+   ```bash
+   curl -s "http://127.0.0.1:37777/api/recall?ids=234,567,891"
+   ```
+   Returns full observation content (~500 tokens/result) for selected IDs only.
+
+**Why This Matters:**
+
+- **Token Efficient**: Claude uses judgment to filter before fetching, achieving ~10x token savings
+- **Prompted Behavior**: The skill teaches Claude WHEN to use memory (questions about past work, missing context, repeated tasks)
+- **No Configuration**: Works automatically when users ask "How did we fix X?" or "What was our approach for Y?"
+
+**Invocation:**
+
+- **`/recall`** - When installed to personal skills directory (`~/.claude/skills/recall/`)
+- **`/claude-mem:recall`** - When using the bundled plugin skill
+
+The skill is bundled with claude-mem. For the shorter `/recall` command, copy to your personal skills:
+```bash
+mkdir -p ~/.claude/skills/recall
+cp ~/.claude/plugins/marketplaces/thedotmack/skills/recall/SKILL.md ~/.claude/skills/recall/
+```
 
 ---
 
